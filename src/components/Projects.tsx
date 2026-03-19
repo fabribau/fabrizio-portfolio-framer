@@ -9,7 +9,7 @@ export default function Projects() {
   const p = translations.projects;
 
   return (
-    <section className="relative z-20 min-h-screen bg-[#050505] text-white py-32 px-8 md:px-16">
+    <section id="projects" className="relative z-20 min-h-screen bg-[#050505] text-white py-32 px-8 md:px-16">
       <div className="container mx-auto">
         <motion.h2
           initial={{ opacity: 0, y: 20 }}

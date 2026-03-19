@@ -110,5 +110,8 @@ export const translations = {
   ui: {
     langToggle: { es: "EN", en: "ES" },
     sequenceLoading: { es: "Cargando secuencia", en: "Loading sequence" },
+    sequencePrevCheckpoint: { es: "Atrás", en: "Back" },
+    sequenceNextCheckpoint: { es: "Continuar", en: "Continue" },
+    sequenceGoProjects: { es: "Ir a proyectos", en: "Go to projects" },
   },
 } as const;

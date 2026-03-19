@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useScroll, useMotionValueEvent } from "framer-motion";
+import { animate, useMotionValue, useMotionValueEvent } from "framer-motion";
 import Overlay from "./Overlay";
 import { useT } from "@/i18n/LanguageContext";
 import { translations } from "@/i18n/translations";
@@ -11,6 +11,8 @@ import {
 } from "@/assets/sequenceFrames";
 
 const READY_RATIO = 0.4;
+const CHECKPOINTS = [0, 0.5, 1] as const;
+const CHECKPOINT_LOCK_MS = 1000;
 
 const findClosestLoadedFrame = (
   frames: Array<HTMLImageElement | undefined>,
@@ -42,15 +44,88 @@ export default function ScrollyCanvas() {
   const ui = translations.ui;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const imagesRef = useRef<Array<HTMLImageElement | undefined>>([]);
+  const progress = useMotionValue(0);
+  const animationRef = useRef<ReturnType<typeof animate> | null>(null);
+  const checkpointLockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasExitedHeroAfterUnlockRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
-  
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ["start start", "end end"]
-  });
+  const [checkpointIndex, setCheckpointIndex] = useState(0);
+  const [scrollUnlocked, setScrollUnlocked] = useState(false);
+  const [isCheckpointLocked, setIsCheckpointLocked] = useState(false);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+
+    if (!scrollUnlocked) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = previousOverflow || "";
+    }
+
+    const preventEvent = (event: Event) => {
+      if (!scrollUnlocked) {
+        event.preventDefault();
+      }
+    };
+
+    const preventKeys = (event: KeyboardEvent) => {
+      if (scrollUnlocked) return;
+
+      const blockedKeys = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
+      if (blockedKeys.includes(event.key)) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("touchmove", preventEvent, { passive: false });
+    window.addEventListener("keydown", preventKeys);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("touchmove", preventEvent);
+      window.removeEventListener("keydown", preventKeys);
+    };
+  }, [scrollUnlocked]);
+
+  useEffect(() => {
+    if (!scrollUnlocked) {
+      hasExitedHeroAfterUnlockRef.current = false;
+      return;
+    }
+
+    const handleScrollRelock = () => {
+      const y = window.scrollY;
+      const viewportHeight = window.innerHeight;
+
+      if (y > viewportHeight * 0.75) {
+        hasExitedHeroAfterUnlockRef.current = true;
+      }
+
+      if (hasExitedHeroAfterUnlockRef.current && y <= viewportHeight * 0.25) {
+        setScrollUnlocked(false);
+        hasExitedHeroAfterUnlockRef.current = false;
+      }
+    };
+
+    window.addEventListener("scroll", handleScrollRelock, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScrollRelock);
+    };
+  }, [scrollUnlocked]);
+
+  const lockCheckpointNavigation = () => {
+    setIsCheckpointLocked(true);
+
+    if (checkpointLockTimeoutRef.current) {
+      clearTimeout(checkpointLockTimeoutRef.current);
+    }
+
+    checkpointLockTimeoutRef.current = setTimeout(() => {
+      setIsCheckpointLocked(false);
+    }, CHECKPOINT_LOCK_MS);
+  };
 
   // Preload Images
   useEffect(() => {
@@ -87,7 +162,7 @@ export default function ScrollyCanvas() {
             const ctx = canvas?.getContext("2d");
             const currentFrameIndex = Math.min(
               FRAME_COUNT - 1,
-              Math.floor(scrollYProgress.get() * FRAME_COUNT)
+              Math.floor(progress.get() * FRAME_COUNT)
             );
             const firstVisibleFrame = findClosestLoadedFrame(loadArray, currentFrameIndex);
 
@@ -114,10 +189,10 @@ export default function ScrollyCanvas() {
     return () => {
       isCancelled = true;
     };
-  }, [scrollYProgress]);
+  }, [progress]);
 
-  // Update canvas on scroll
-  useMotionValueEvent(scrollYProgress, "change", (latest) => {
+  // Update canvas when checkpoint animation changes progress
+  useMotionValueEvent(progress, "change", (latest) => {
     if (!isReady || imagesRef.current.length !== FRAME_COUNT || !canvasRef.current) return;
     
     // Map scroll progress (0-1) to frame index (0-159)
@@ -133,6 +208,63 @@ export default function ScrollyCanvas() {
     }
   });
 
+  const goNextCheckpoint = () => {
+    if (isCheckpointLocked) return;
+
+    lockCheckpointNavigation();
+
+    if (checkpointIndex >= CHECKPOINTS.length - 1) {
+      setScrollUnlocked(true);
+      document.getElementById("projects")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
+    const nextIndex = checkpointIndex + 1;
+    setCheckpointIndex(nextIndex);
+    animationRef.current?.stop();
+    animationRef.current = animate(progress, CHECKPOINTS[nextIndex], {
+      duration: 0.9,
+      ease: "easeInOut",
+    });
+  };
+
+  const goPrevCheckpoint = () => {
+    if (isCheckpointLocked) return;
+    if (checkpointIndex <= 0) return;
+
+    lockCheckpointNavigation();
+
+    const prevIndex = checkpointIndex - 1;
+    setCheckpointIndex(prevIndex);
+    animationRef.current?.stop();
+    animationRef.current = animate(progress, CHECKPOINTS[prevIndex], {
+      duration: 0.9,
+      ease: "easeInOut",
+    });
+  };
+
+  useEffect(() => {
+    const handleWheelNavigation = (event: WheelEvent) => {
+      if (scrollUnlocked) return;
+
+      event.preventDefault();
+
+      if (!isReady || isCheckpointLocked) return;
+
+      const threshold = 16;
+      if (event.deltaY > threshold) {
+        goNextCheckpoint();
+      } else if (event.deltaY < -threshold) {
+        goPrevCheckpoint();
+      }
+    };
+
+    window.addEventListener("wheel", handleWheelNavigation, { passive: false });
+    return () => {
+      window.removeEventListener("wheel", handleWheelNavigation);
+    };
+  }, [goNextCheckpoint, goPrevCheckpoint, isCheckpointLocked, isReady, scrollUnlocked]);
+
   // Handle Canvas Resize
   useEffect(() => {
     const handleResize = () => {
@@ -143,7 +275,7 @@ export default function ScrollyCanvas() {
 
       if (imagesRef.current.length > 0) {
         const ctx = canvas.getContext("2d");
-        const latestInfo = scrollYProgress.get();
+        const latestInfo = progress.get();
         const frameIndex = Math.min(
           FRAME_COUNT - 1,
           Math.floor(latestInfo * FRAME_COUNT)
@@ -158,7 +290,16 @@ export default function ScrollyCanvas() {
     handleResize(); // Initial resize
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [scrollYProgress, isReady]);
+  }, [progress, isReady]);
+
+  useEffect(() => {
+    return () => {
+      animationRef.current?.stop();
+      if (checkpointLockTimeoutRef.current) {
+        clearTimeout(checkpointLockTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Draw image replicating CSS object-fit: cover
   const drawObjectFitCover = (
@@ -183,12 +324,11 @@ export default function ScrollyCanvas() {
 
   return (
     <div
-      ref={containerRef}
       style={{ position: "relative" }}
-      className="relative w-full h-[800vh] bg-black"
+      className="relative w-full h-screen bg-black"
       aria-busy={!isReady}
     >
-      <div className="sticky top-0 w-full h-screen overflow-hidden bg-[#050505]">
+      <div className="w-full h-screen overflow-hidden bg-[#050505]">
         {/* Canvas Engine */}
         <canvas
           ref={canvasRef}
@@ -200,7 +340,44 @@ export default function ScrollyCanvas() {
         {/* Overlay Content */}
         {isReady ? (
           <div className="absolute inset-0 z-10 pointer-events-none animate-in fade-in duration-500">
-            <Overlay scrollYProgress={scrollYProgress} />
+            <Overlay scrollYProgress={progress} />
+          </div>
+        ) : null}
+
+        {isReady ? (
+          <div className="absolute inset-x-0 bottom-8 z-30 flex flex-col items-center gap-4 pointer-events-auto px-4">
+            <div className="flex items-center gap-2">
+              {CHECKPOINTS.map((_, index) => (
+                <span
+                  key={index}
+                  className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
+                    index <= checkpointIndex ? "bg-white" : "bg-white/30"
+                  }`}
+                />
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={goPrevCheckpoint}
+                disabled={checkpointIndex === 0 || isCheckpointLocked}
+                className="rounded-full border border-white/40 bg-white/10 backdrop-blur px-6 py-3 text-sm md:text-base uppercase tracking-[0.14em] text-white hover:bg-white/20 transition-colors duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {t(ui.sequencePrevCheckpoint)}
+              </button>
+
+              <button
+                type="button"
+                onClick={goNextCheckpoint}
+                disabled={isCheckpointLocked}
+                className="rounded-full border border-white/40 bg-white/10 backdrop-blur px-6 py-3 text-sm md:text-base uppercase tracking-[0.14em] text-white hover:bg-white/20 transition-colors duration-300"
+              >
+                {checkpointIndex >= CHECKPOINTS.length - 1
+                  ? t(ui.sequenceGoProjects)
+                  : t(ui.sequenceNextCheckpoint)}
+              </button>
+            </div>
           </div>
         ) : null}
 

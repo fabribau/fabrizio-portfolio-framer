@@ -12,22 +12,22 @@ export default function Overlay({ scrollYProgress }: OverlayProps) {
   const t = useT();
   const o = translations.overlay;
 
-  // 0% → Name + Title (center), visible only until 20%
-  const opacity1 = useTransform(scrollYProgress, [0, 0.18, 0.2, 1], [1, 1, 0, 0]);
-  const y1 = useTransform(scrollYProgress, [0, 0.2], [0, -30]);
-  const scale1 = useTransform(scrollYProgress, [0, 0.2], [1, 0.97]);
+  // 0% → 33%: Name + Title (center)
+  const opacity1 = useTransform(scrollYProgress, [0, 0.33, 0.34, 1], [1, 1, 0, 0]);
+  const y1 = useTransform(scrollYProgress, [0, 0.34], [0, -30]);
+  const scale1 = useTransform(scrollYProgress, [0, 0.34], [1, 0.97]);
 
-  // 20% → Mission (left), visible only between 20% and 40%
+  // 34% → 66%: Mission (left)
   const opacity2 = useTransform(
     scrollYProgress,
-    [0, 0.19, 0.2, 0.39, 0.4, 1],
+    [0, 0.33, 0.34, 0.66, 0.67, 1],
     [0, 0, 1, 1, 0, 0]
   );
-  const y2 = useTransform(scrollYProgress, [0.2, 0.4], [20, -20]);
+  const y2 = useTransform(scrollYProgress, [0.34, 0.67], [20, -20]);
 
-  // 40% → Approach (right), smooth fade-in like Mission
-  const opacity3 = useTransform(scrollYProgress, [0, 0.39, 0.5, 1], [0, 0, 1, 1]);
-  const y3 = useTransform(scrollYProgress, [0.4, 0.5, 1], [20, 0, 0]);
+  // 67% → 100%: Approach (right)
+  const opacity3 = useTransform(scrollYProgress, [0, 0.66, 0.67, 1], [0, 0, 1, 1]);
+  const y3 = useTransform(scrollYProgress, [0.67, 1], [20, 0]);
 
   return (
     <div className="relative w-full h-full px-8 md:px-16 container mx-auto">
