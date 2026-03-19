@@ -13,6 +13,8 @@ import {
 const READY_RATIO = 0.4;
 const CHECKPOINTS = [0, 0.5, 1] as const;
 const CHECKPOINT_LOCK_MS = 1000;
+const SWIPE_THRESHOLD_PX = 42;
+const HERO_RELOCK_RATIO = 0.99;
 
 const findClosestLoadedFrame = (
   frames: Array<HTMLImageElement | undefined>,
@@ -43,8 +45,10 @@ export default function ScrollyCanvas() {
   const t = useT();
   const ui = translations.ui;
 
+  const heroRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imagesRef = useRef<Array<HTMLImageElement | undefined>>([]);
+  const touchStartYRef = useRef<number | null>(null);
   const progress = useMotionValue(0);
   const animationRef = useRef<ReturnType<typeof animate> | null>(null);
   const checkpointLockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,20 +100,29 @@ export default function ScrollyCanvas() {
     }
 
     const handleScrollRelock = () => {
-      const y = window.scrollY;
-      const viewportHeight = window.innerHeight;
+      const hero = heroRef.current;
+      if (!hero) return;
 
-      if (y > viewportHeight * 0.75) {
+      const viewportHeight = window.innerHeight;
+      const rect = hero.getBoundingClientRect();
+      const visibleHeight = Math.max(
+        0,
+        Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0)
+      );
+      const visibleRatio = viewportHeight > 0 ? visibleHeight / viewportHeight : 0;
+
+      if (visibleRatio < HERO_RELOCK_RATIO) {
         hasExitedHeroAfterUnlockRef.current = true;
       }
 
-      if (hasExitedHeroAfterUnlockRef.current && y <= viewportHeight * 0.25) {
+      if (hasExitedHeroAfterUnlockRef.current && visibleRatio >= HERO_RELOCK_RATIO) {
         setScrollUnlocked(false);
         hasExitedHeroAfterUnlockRef.current = false;
       }
     };
 
     window.addEventListener("scroll", handleScrollRelock, { passive: true });
+    handleScrollRelock();
     return () => {
       window.removeEventListener("scroll", handleScrollRelock);
     };
@@ -265,6 +278,38 @@ export default function ScrollyCanvas() {
     };
   }, [goNextCheckpoint, goPrevCheckpoint, isCheckpointLocked, isReady, scrollUnlocked]);
 
+  useEffect(() => {
+    const handleTouchStart = (event: TouchEvent) => {
+      if (scrollUnlocked || !isReady) return;
+      touchStartYRef.current = event.touches[0]?.clientY ?? null;
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      if (scrollUnlocked || !isReady || isCheckpointLocked) return;
+
+      const startY = touchStartYRef.current;
+      const endY = event.changedTouches[0]?.clientY;
+      touchStartYRef.current = null;
+
+      if (startY == null || endY == null) return;
+
+      const deltaY = startY - endY;
+      if (deltaY > SWIPE_THRESHOLD_PX) {
+        goNextCheckpoint();
+      } else if (deltaY < -SWIPE_THRESHOLD_PX) {
+        goPrevCheckpoint();
+      }
+    };
+
+    window.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchend", handleTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [goNextCheckpoint, goPrevCheckpoint, isCheckpointLocked, isReady, scrollUnlocked]);
+
   // Handle Canvas Resize
   useEffect(() => {
     const handleResize = () => {
@@ -324,11 +369,12 @@ export default function ScrollyCanvas() {
 
   return (
     <div
+      ref={heroRef}
       style={{ position: "relative" }}
-      className="relative w-full h-screen bg-black"
+      className="relative w-full hero-dvh bg-black"
       aria-busy={!isReady}
     >
-      <div className="w-full h-screen overflow-hidden bg-[#050505]">
+      <div className="w-full hero-dvh overflow-hidden bg-[#050505]">
         {/* Canvas Engine */}
         <canvas
           ref={canvasRef}
@@ -345,7 +391,10 @@ export default function ScrollyCanvas() {
         ) : null}
 
         {isReady ? (
-          <div className="absolute inset-x-0 bottom-8 z-30 flex flex-col items-center gap-4 pointer-events-auto px-4">
+          <div
+            className="absolute inset-x-0 z-30 flex flex-col items-center gap-4 pointer-events-auto px-4"
+            style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+          >
             <div className="flex items-center gap-2">
               {CHECKPOINTS.map((_, index) => (
                 <span
@@ -357,12 +406,12 @@ export default function ScrollyCanvas() {
               ))}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex w-full max-w-md items-center justify-center gap-3">
               <button
                 type="button"
                 onClick={goPrevCheckpoint}
                 disabled={checkpointIndex === 0 || isCheckpointLocked}
-                className="rounded-full border border-white/40 bg-white/10 backdrop-blur px-6 py-3 text-sm md:text-base uppercase tracking-[0.14em] text-white hover:bg-white/20 transition-colors duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 sm:flex-none rounded-full border border-white/40 bg-white/10 backdrop-blur px-4 md:px-6 py-3 text-xs md:text-base uppercase tracking-[0.14em] text-white hover:bg-white/20 transition-colors duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {t(ui.sequencePrevCheckpoint)}
               </button>
@@ -371,7 +420,7 @@ export default function ScrollyCanvas() {
                 type="button"
                 onClick={goNextCheckpoint}
                 disabled={isCheckpointLocked}
-                className="rounded-full border border-white/40 bg-white/10 backdrop-blur px-6 py-3 text-sm md:text-base uppercase tracking-[0.14em] text-white hover:bg-white/20 transition-colors duration-300"
+                className="flex-1 sm:flex-none rounded-full border border-white/40 bg-white/10 backdrop-blur px-4 md:px-6 py-3 text-xs md:text-base uppercase tracking-[0.14em] text-white hover:bg-white/20 transition-colors duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {checkpointIndex >= CHECKPOINTS.length - 1
                   ? t(ui.sequenceGoProjects)
